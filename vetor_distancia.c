@@ -43,8 +43,6 @@
 #include <string.h>
 
 
-
-
 /* Redes distantes à INF pulos são consideradas inacessíveis.
  * Esta definição ajudará a evitar problemas de contagem infinita. */
 #define INFINITO 5
@@ -57,15 +55,15 @@
 
 /* Define quantos passos sem variação nas tabelas são necessários para
  * considerar o algoritmo finalizado. */
-#define ESTADO_ESTATICO 5
+#define ESTADO_ESTATICO 10
 
 
 /* Define o tamanho do buffer de entrada de cada roteador. Um buffer
  * muito pequeno em uma rede grande pode causar perda de pacotes. */
-#define PKT_BUFFER 10
+#define PKT_BUFFER 5
 
 
-
+#define TEMPO_DE_PASSO 250000
 
 /* Enumeração para assignar IDs aos roteadores.
  * Em uma implementação real, isto não existiria.
@@ -118,7 +116,7 @@ int conexoes_enlaces [N_ROTEADORES][N_ROTEADORES] =
 typedef struct rota_t{		/* Rota */
 	
 	/* Estrutura que forma uma rota ideal até um ponto. Indica o destino,
-	* o caminho (através de quem) e o custo. */
+	* o caminho (através de quem) e o custo da rota. */
 	
 	int destino;
 	int caminho;
@@ -130,7 +128,8 @@ typedef struct rota_t{		/* Rota */
 typedef struct pacote_t{		/* Pacote */
 	
 	/* Pacote simples enviado entre roteadores.
-	* Contém informação sobre o remetente da mensagem e suas rotas ideais. */
+	*  Contém informação sobre o remetente da
+	* mensagem e suas rotas ideais até o momento. */
 	
 	int remetente;
 	rota_t rotas [N_ROTEADORES];
@@ -180,24 +179,29 @@ int recebe_pacote(roteador *, int dst);
 // Printa os custos atuais entre roteadores.
 void printa_rotas(roteador *);
 
+// Desenha roteadores e seus enlaçes.
+// Esta função não acompanharia mudanças na matriz de conexões (o desenho é estático).
+void desenha_topologia();
+
 
 int main(void){
 	
 	srand(time(NULL));
-	
+	roteador roteadores[N_ROTEADORES];
+		
 	system("clear");
 	printf("Simulador de algoritmo vetor de distância\n");
 	printf("Filipe Nicoli - Teoria de Redes - 2016/1\n\n");
+		
+	printf("Topologia de conexão dos roteadores:\n\n");
 	
-	printf("Criando roteadores...\n\n");
-	roteador roteadores[N_ROTEADORES];
 	
 	// Desenha o esquema de roteadores na tela
-	printf("             B ------ D\n            /| \\      |\\\n           / |  \\     | \\\n          /  |   \\    |  \\\n         A   |    \\   |   F\n          \\  |     \\  |  /\n           \\ |      \\ | /\n            \\|       \\|/\n             C ------ E\n\n");
-	
+	desenha_topologia();
+		
 	printf("Preencha os custos de transmissão entre cada roteador:\n");
 	preencher_enlaces(roteadores);
-	
+
 	printf("Pressione ENTER para iniciar a simulação.");
 	while(getchar()!='\n');
 	getchar();
@@ -249,7 +253,7 @@ int main(void){
 		if( passo - ultimo_passo_com_variacao >= ESTADO_ESTATICO ) break;
 		
 		// Aguarda 1/2 de segundo para que o usuário consiga perceber as variações
-		usleep(1000000);
+		usleep(TEMPO_DE_PASSO);
 		
 		passo++;
 	}
@@ -264,11 +268,21 @@ int recebe_pacote(roteador * r, int dst){
 
 	/* Trata os pacotes até que não haja mais nenhum no buffer. */
 
+	int pacote;					// posição do pacote na pilha
+	int remetente;				// remetente do pacote
+	int custo_atual;			// custo atual até o destino sugerido pela rota de um pacote
+	int custo_remetente;		// custo até o remetente do pacote
+	int custo_rota_pacote;		// custo da rota sugerida
+	int destino_rota_pacote;	// destino da rota sugerida
+
 	int delta = 0;
 	int rota_idx;
 		
 	// Enquanto houverem pacotes a serem recebidos, roda o loop
-	for(; r[dst].idx>1; r[dst].idx--){
+	while(r[dst].idx!=0)
+	{
+		
+		r[dst].idx--;
 		
 		for(rota_idx=0; rota_idx<N_ROTEADORES; rota_idx++){
 
@@ -277,14 +291,26 @@ int recebe_pacote(roteador * r, int dst){
 			 * dizer que o pacote nos apresenta uma rota melhor para um destino. Devemos então
 			 * copiar esta rota sugerida pelo pacote e utilizá-la. */
 			 
-			if( r[dst].rotas[ r[dst].entrada[r[dst].idx-1].rotas[rota_idx].destino ].custo > (r[dst].entrada[r[dst].idx-1].rotas[rota_idx].custo + r[dst].rotas[r[dst].entrada[r[dst].idx-1].remetente].custo ) ){
+			pacote              = r[dst].idx;											// posição do pacote na pilha
+			destino_rota_pacote = r[dst].entrada[ pacote ].rotas[ rota_idx ].destino;	// destino da rota "rota_idx" presente no pacote "pacote"
+			custo_atual         = r[dst].rotas[ destino_rota_pacote ].custo;			// custo atual até o destino sugerido pela rota
+			remetente           = r[dst].entrada[ pacote ].remetente;					// remetente do pacote
+			custo_remetente     = r[dst].rotas[ remetente ].custo;						// custo até o remetente da mensagem
+			custo_rota_pacote   = r[dst].entrada[ pacote ].rotas[ rota_idx ].custo;		// custo da rota sugerida
+			
+			if( custo_atual > (custo_rota_pacote + custo_remetente) )
+			
+			/* Se o custo atual for maior que o custo até o destino (utilizando o remetente como caminho),
+			 * utilizaremos a rota sugerida e utilizaremos o remetente da mensagem como ponte. */
+			
+			{
 
 				/* Copiamos o remetente como caminho mais curto até o destino. */
-				r[dst].rotas[ r[dst].entrada[r[dst].idx-1].rotas[rota_idx].destino ].caminho = r[dst].entrada[r[dst].idx-1].remetente;
+				r[dst].rotas[ destino_rota_pacote ].caminho = remetente;
 
 				/* Copiamos o custo e somamos o custo até o vizinho remetente, pois além da distância
 				 * de nosso vizinho até o destino, precisamos dar um pulo até o vizinho primeiro. */
-				r[dst].rotas[ r[dst].entrada[r[dst].idx-1].rotas[rota_idx].destino ].custo   = (r[dst].entrada[r[dst].idx-1].rotas[rota_idx].custo + r[dst].rotas[r[dst].entrada[r[dst].idx-1].remetente].custo );
+				r[dst].rotas[ destino_rota_pacote ].custo   = custo_rota_pacote + custo_remetente;
 				
 				/* Quando terminarmos de analisar todas as rotas de todos os pacotes,
 				 * avisaremos o loop principar de que realizamos mudanças na tabela
@@ -298,32 +324,66 @@ int recebe_pacote(roteador * r, int dst){
 	return delta;
 }
 
+void desenha_topologia()
+{
+	printf("             B ------ D\n            /| \\      |\\\n           / |  \\     | \\\n          /  |   \\    |  \\\n         A   |    \\   |   F\n          \\  |     \\  |  /\n           \\ |      \\ | /\n            \\|       \\|/\n             C ------ E\n\n");
+}
+
 int envia_pacotes(roteador * r, int src){
 	
-	int pkt_drop = 0;
+	/* Esta função é dividida em duas partes:
+	 * 	- criação do pacote (em formato pacote_t);
+	 * 	- envio do pacote.
+	 * 
+	 *  A criação do pacote segue os moldes de algo que poderia ser real.
+	 *  O envio dos pacotes é uma simulação apenas. Como o simulador é
+	 * capaz de acessar a memória do buffer de entrada de todos os rotea-
+	 * dores, a entrega é feita copiando o pacote no buffer. No mundo real
+	 * poderiam ocorrer erros de entrega, mas estes não foram contemplados.
+	 *  O máximo que pode ocorrer é o buffer virtual ficar "cheio" (isto é
+	 * configurável no início do arquivo), o que pode simular tráfego
+	 * intenso no roteador. Quando o buffer fica cheio, o laço de envio
+	 * (não o de recebimento) ignora os pacotes e acrescenta uma unidade
+	 * ao contador de pacotes dropados. */
 	
-	// Cria pacote a ser enviado
-	pacote_t pkt;
 	
-	// Define o remetente
-	pkt.remetente = src;
 	
-	// Copia as rotas pessoais para as rotas do pacote
-	int dst;
-	for( dst=0; dst<N_ROTEADORES; dst++){
-		pkt.rotas[dst].destino = r[src].rotas[dst].destino;
-		pkt.rotas[dst].caminho = r[src].rotas[dst].caminho;
-		pkt.rotas[dst].custo   = r[src].rotas[dst].custo;
-	}
-		
-	// ------ Pacote finalizado -------
+	// ------ Cria pacote a ser enviado ------
+			pacote_t pkt;
+			
+			// Define o remetente
+			pkt.remetente = src;
+			
+			// Copia as rotas pessoais para as rotas do pacote
+			int dst;
+			for( dst=0; dst<N_ROTEADORES; dst++){
+				pkt.rotas[dst].destino = r[src].rotas[dst].destino;
+				pkt.rotas[dst].caminho = r[src].rotas[dst].caminho;
+				pkt.rotas[dst].custo   = r[src].rotas[dst].custo;
+			}
+	// ---------- Pacote finalizado -----------
 	
-	// --------- Inicia envio ---------
+	
+	
+	
+	// ----------- Inicia envio -----------
 	
 	/* O envio aqui é representado pela cópia do pacote no buffer de
-	 * entrada do roteador. */
+	 * entrada do roteador.
+	 * - "rota_dst" é o indexador da lista de rotas contidas no pacote
+	 * - "existe" é utilizada para informar se um destino na lista de
+	 * roteadores deve receber ou não o pacote. A verificação se baseia
+	 * na existência de um link físico entre os dispositivos (configurado
+	 * na matriz conexoes_enlaces). Esta variável é necessária para que
+	 * o simulador proteja dispositivos desconectados do remetente de
+	 * receberem uma mensagem impossível de ser recebida no mundo real.
+	 * - "dst_idx" é o indexador da lista de roteadores.
+	 * - "pkt_drop" é a contagem de pacotes que não puderam ser entregues
+	 * aos roteadores. Este valor é retornado pela função e é somado à
+	 * variável de mesma função no laço principal. */
 	 
-	int rota_dst, existe, dst_idx;
+	int rota_dst, existe, dst_idx, pkt_drop = 0;;
+	
 	
 	// Envia o pacote para cada roteador ao alcance.
 	for (dst=0; dst<N_ROTEADORES; dst++){
@@ -342,25 +402,33 @@ int envia_pacotes(roteador * r, int src){
 		 * os roteadores não-vizinhos não receberiam o pacote
 		 * simplesmente por não estarem conectados. */
 		if(existe){
-				
-			if(r[dst].idx == (PKT_BUFFER-1))
-				pkt_drop++;
-			else{
 
-				//printf("idx_entrada %d, remetente %d\n", r[dst].idx, pkt.remetente);
+			// Testa se o buffer do destinatário está cheio.
+			if(r[dst].idx == (PKT_BUFFER))
+			{
+				pkt_drop++;
+			}
+			else
+			{
+
+				// Insere o remetende no buffer do destinatário.
 				r[dst].entrada[r[dst].idx].remetente = pkt.remetente;
 				
-				
+				// Copia todas as rotas do pacote para o buffer do destinatário.
 				for(rota_dst = 0; rota_dst<N_ROTEADORES; rota_dst++){
-					//printf("de: %d\tdestino: %d\tcaminho: %d\tcusto: %d\nentrada por %p\n", src, pkt.rotas[rota_dst].destino, pkt.rotas[rota_dst].caminho,pkt.rotas[rota_dst].custo, &r[dst].entrada[r[dst].idx].remetente);
+					
 					r[dst].entrada[r[dst].idx].rotas[rota_dst].destino = pkt.rotas[rota_dst].destino;
 					r[dst].entrada[r[dst].idx].rotas[rota_dst].caminho = pkt.rotas[rota_dst].caminho;
 					r[dst].entrada[r[dst].idx].rotas[rota_dst].custo   = pkt.rotas[rota_dst].custo;
+
 				}
 				r[dst].idx++;
+				
 			}
 		}
 	}
+	// --------- Envio finalizado ---------
+	
 	return pkt_drop;
 }
 
@@ -400,8 +468,11 @@ void preencher_enlaces(roteador * roteadores){
 	
 	printf("\n\tDICA: Para auto-preencher o resto da tabela com custo 1,\n\t      insira custo zero a qualquer momento.\n\n");
 	
-	// Define custo infinito para tudo
+	// Define custo infinito para tudo e zera idx
 	for(i=0; i<N_ROTEADORES; i++){
+		
+		roteadores[i].idx = 0;
+		
 		for(j=0; j<N_ROTEADORES; j++){
 			_preencher_enlaces(roteadores, i, j, INFINITO);
 		}
@@ -438,6 +509,11 @@ void _preencher_enlaces(roteador * r, int src, int dst, int custo){
 	 * destino, caminho (o próprio destino neste caso) e o custo. */
 	 
 	r[src].rotas[dst].destino = dst;
-	r[src].rotas[dst].caminho = dst;
+	
+	if(custo==INFINITO)
+		r[src].rotas[dst].caminho = -1;
+	else
+		r[src].rotas[dst].caminho = dst;
+
 	r[src].rotas[dst].custo = custo;
 }
